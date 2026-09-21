@@ -216,18 +216,21 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
                 st.caption(f"📱 {row['phone']}")
 
             tag_list = [t.strip() for t in (row["tags"] or "").split(",") if t.strip()]
-            if tag_list:
-                st.write(" ".join(f"`{t}`" for t in tag_list))
 
-            preset_selected = [t for t in tag_list if t in SUGGESTED_TAGS]
+            st.caption("Tags — click to add/remove")
+            for i in range(0, len(SUGGESTED_TAGS), 4):
+                chunk = SUGGESTED_TAGS[i:i + 4]
+                tag_cols = st.columns(4)
+                for j, tag in enumerate(chunk):
+                    with tag_cols[j]:
+                        active = tag in tag_list
+                        label = ("✅ " if active else "") + tag
+                        if st.button(label, key=f"tagbtn_{row['id']}_{tag}"):
+                            new_tags = [t for t in tag_list if t != tag] if active else tag_list + [tag]
+                            if set_tags(row["id"], ", ".join(new_tags)):
+                                st.rerun()
+
             custom_existing = [t for t in tag_list if t not in SUGGESTED_TAGS]
-
-            quick_tags = st.multiselect(
-                "Quick tags",
-                SUGGESTED_TAGS,
-                default=preset_selected,
-                key=f"quicktags_{row['id']}",
-            )
             tgc1, tgc2 = st.columns([3, 1])
             with tgc1:
                 custom_tags_val = st.text_input(
@@ -238,9 +241,10 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
             with tgc2:
                 st.write("")
                 st.write("")
-                if st.button("Save tags", key=f"tags_save_{row['id']}"):
+                if st.button("Save", key=f"tags_save_{row['id']}"):
                     custom_parsed = [t.strip() for t in custom_tags_val.split(",") if t.strip()]
-                    merged = quick_tags + [t for t in custom_parsed if t not in quick_tags]
+                    preset_active = [t for t in tag_list if t in SUGGESTED_TAGS]
+                    merged = preset_active + [t for t in custom_parsed if t not in preset_active]
                     if set_tags(row["id"], ", ".join(merged)):
                         st.rerun()
 
