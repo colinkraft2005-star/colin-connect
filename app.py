@@ -33,6 +33,7 @@ def get_conn():
             assigned_to TEXT,
             texted INTEGER DEFAULT 0,
             phone TEXT,
+            tags TEXT,
             checked_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -46,6 +47,8 @@ def get_conn():
         conn.execute("ALTER TABLE pnms ADD COLUMN texted INTEGER DEFAULT 0")
     if "phone" not in existing_cols:
         conn.execute("ALTER TABLE pnms ADD COLUMN phone TEXT")
+    if "tags" not in existing_cols:
+        conn.execute("ALTER TABLE pnms ADD COLUMN tags TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS votes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +162,15 @@ def update_pnm_info(pnm_id, name, hometown, major, phone):
         st.error("That didn't save — the app's busy, try again in a second.")
         return False
 
+def set_tags(pnm_id, tags_str):
+    try:
+        conn.execute("UPDATE pnms SET tags=? WHERE id=?", (tags_str, pnm_id))
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
+
 def set_texted(pnm_id, value):
     try:
         conn.execute("UPDATE pnms SET texted=? WHERE id=?", (1 if value else 0, pnm_id))
@@ -192,6 +204,24 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
             st.write(f"{row['hometown']} · {row['major']}")
             if row["phone"]:
                 st.caption(f"📱 {row['phone']}")
+
+            tag_list = [t.strip() for t in (row["tags"] or "").split(",") if t.strip()]
+            if tag_list:
+                st.write(" ".join(f"`{t}`" for t in tag_list))
+
+            tgc1, tgc2 = st.columns([3, 1])
+            with tgc1:
+                tags_val = st.text_input(
+                    "Tags (comma-separated — skiing, music, engineering...)",
+                    value=row["tags"] or "",
+                    key=f"tags_input_{row['id']}",
+                )
+            with tgc2:
+                st.write("")
+                st.write("")
+                if st.button("Save", key=f"tags_save_{row['id']}"):
+                    if set_tags(row["id"], tags_val.strip()):
+                        st.rerun()
 
             yes, maybe, no = vote_counts(row["id"])
             mine = my_vote(row["id"], member_name)
@@ -382,6 +412,22 @@ else:
         st.title("👍 Vote & Comment")
         df = fetch_pnms(dirty=False)
 
+        all_tags = sorted({
+            t.strip()
+            for tags_str in df["tags"].fillna("")
+            for t in tags_str.split(",")
+            if t.strip()
+        })
+        selected_tags = st.multiselect(
+            "Filter by tag — find who to go talk to",
+            all_tags,
+        )
+        if selected_tags:
+            def _has_any_selected_tag(tags_str):
+                row_tags = {t.strip() for t in (tags_str or "").split(",") if t.strip()}
+                return bool(row_tags & set(selected_tags))
+            df = df[df["tags"].apply(_has_any_selected_tag)]
+
         search = st.text_input("Search by name")
         if search:
             df = df[df["name"].str.contains(search, case=False, na=False)]
@@ -429,6 +475,7 @@ else:
                     "Hometown": row["hometown"],
                     "Major": row["major"],
                     "Phone": row["phone"] or "",
+                    "Tags": row["tags"] or "",
                     "Yes": yes,
                     "Maybe": maybe,
                     "No": no,
