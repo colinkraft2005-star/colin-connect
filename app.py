@@ -31,15 +31,21 @@ def get_conn():
             photo BLOB,
             dirty INTEGER DEFAULT 0,
             assigned_to TEXT,
+            texted INTEGER DEFAULT 0,
+            phone TEXT,
             checked_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Migration for the already-deployed db, which was created before
-    # assigned_to existed — CREATE TABLE IF NOT EXISTS above is a no-op
-    # against it, so add the column by hand if it's missing.
+    # Migration for the already-deployed db, which was created before these
+    # columns existed — CREATE TABLE IF NOT EXISTS above is a no-op against
+    # it, so add columns by hand if missing.
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(pnms)").fetchall()}
     if "assigned_to" not in existing_cols:
         conn.execute("ALTER TABLE pnms ADD COLUMN assigned_to TEXT")
+    if "texted" not in existing_cols:
+        conn.execute("ALTER TABLE pnms ADD COLUMN texted INTEGER DEFAULT 0")
+    if "phone" not in existing_cols:
+        conn.execute("ALTER TABLE pnms ADD COLUMN phone TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS votes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,12 +147,21 @@ def set_assigned(pnm_id, assigned_to):
         st.error("That didn't save — the app's busy, try again in a second.")
         return False
 
-def update_pnm_info(pnm_id, name, hometown, major):
+def update_pnm_info(pnm_id, name, hometown, major, phone):
     try:
         conn.execute(
-            "UPDATE pnms SET name=?, hometown=?, major=? WHERE id=?",
-            (name, hometown, major, pnm_id)
+            "UPDATE pnms SET name=?, hometown=?, major=?, phone=? WHERE id=?",
+            (name, hometown, major, phone, pnm_id)
         )
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
+
+def set_texted(pnm_id, value):
+    try:
+        conn.execute("UPDATE pnms SET texted=? WHERE id=?", (1 if value else 0, pnm_id))
         conn.commit()
         return True
     except sqlite3.OperationalError:
@@ -175,6 +190,8 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
         with c2:
             st.subheader(row["name"])
             st.write(f"{row['hometown']} · {row['major']}")
+            if row["phone"]:
+                st.caption(f"📱 {row['phone']}")
 
             yes, maybe, no = vote_counts(row["id"])
             mine = my_vote(row["id"], member_name)
@@ -207,7 +224,7 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
                                 st.rerun()
 
             if show_assign:
-                ac1, ac2 = st.columns([3, 1])
+                ac1, ac2, ac3 = st.columns([3, 1, 1.3])
                 with ac1:
                     assign_val = st.text_input(
                         "Assigned to (who's texting him)",
@@ -219,6 +236,16 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
                     st.write("")
                     if st.button("Save", key=f"assign_save_{row['id']}"):
                         if set_assigned(row["id"], assign_val.strip()):
+                            st.rerun()
+                with ac3:
+                    st.write("")
+                    texted_val = st.checkbox(
+                        "✅ Texted",
+                        value=bool(row["texted"]),
+                        key=f"texted_{row['id']}",
+                    )
+                    if texted_val != bool(row["texted"]):
+                        if set_texted(row["id"], texted_val):
                             st.rerun()
 
             with st.expander(f"Comments ({len(get_comments(row['id']))})"):
@@ -232,15 +259,17 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
 
             if is_admin:
                 with st.expander("✏️ Edit / delete (admin)"):
-                    e1, e2, e3 = st.columns(3)
+                    e1, e2, e3, e4 = st.columns(4)
                     with e1:
                         edit_name = st.text_input("Name", value=row["name"], key=f"edit_name_{row['id']}")
                     with e2:
                         edit_hometown = st.text_input("Hometown", value=row["hometown"] or "", key=f"edit_hometown_{row['id']}")
                     with e3:
                         edit_major = st.text_input("Major", value=row["major"] or "", key=f"edit_major_{row['id']}")
+                    with e4:
+                        edit_phone = st.text_input("Phone", value=row["phone"] or "", key=f"edit_phone_{row['id']}")
                     if st.button("Save changes", key=f"edit_save_{row['id']}"):
-                        if update_pnm_info(row["id"], edit_name.strip(), edit_hometown.strip(), edit_major.strip()):
+                        if update_pnm_info(row["id"], edit_name.strip(), edit_hometown.strip(), edit_major.strip(), edit_phone.strip()):
                             st.rerun()
 
                     confirm_key = f"confirm_delete_{row['id']}"
@@ -284,6 +313,7 @@ if st.session_state.area == "checkin":
         name = st.text_input("Name")
         hometown = st.text_input("Hometown")
         major = st.text_input("Major")
+        phone = st.text_input("Phone number")
 
         submitted = st.form_submit_button("Check In", type="primary")
         if submitted:
@@ -293,8 +323,8 @@ if st.session_state.area == "checkin":
                 photo_bytes = photo.getvalue() if photo is not None else None
                 try:
                     conn.execute(
-                        "INSERT INTO pnms (name, hometown, major, photo, checked_in_at) VALUES (?,?,?,?,?)",
-                        (name.strip(), hometown.strip(), major.strip(), photo_bytes, datetime.now())
+                        "INSERT INTO pnms (name, hometown, major, phone, photo, checked_in_at) VALUES (?,?,?,?,?,?)",
+                        (name.strip(), hometown.strip(), major.strip(), phone.strip(), photo_bytes, datetime.now())
                     )
                     conn.commit()
                     st.success(f"Thanks {name}, you're checked in!")
@@ -398,12 +428,14 @@ else:
                     "Name": row["name"],
                     "Hometown": row["hometown"],
                     "Major": row["major"],
+                    "Phone": row["phone"] or "",
                     "Yes": yes,
                     "Maybe": maybe,
                     "No": no,
                     "Score": score,
                     "Dirty": "✓" if row["dirty"] else "",
                     "Assigned": row["assigned_to"] or "",
+                    "Texted": "✓" if row["texted"] else "",
                     "Comments": len(get_comments(row["id"])),
                     "Checked in": checked_in_pt,
                 })
