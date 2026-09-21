@@ -14,6 +14,15 @@ DB_PATH = "rush.db"
 HOUSE_PIN = st.secrets.get("HOUSE_PIN", "changeme")        # regular members
 ADMIN_PIN = st.secrets.get("ADMIN_PIN", "adminchangeme")   # the one person who can tag "dirty"
 
+# Curated quick-add tags — kept short and non-sensitive on purpose (no drug
+# references, nothing that could read badly if a CSV export ever left the
+# house). Anyone can still type a custom tag in the box below these.
+SUGGESTED_TAGS = [
+    "Sports", "Music", "Skiing/Snow", "Outdoors", "Gaming", "Fitness/Gym", "Cars", "Film/Art",
+    "East Coast", "West Coast", "Legacy",
+    "Shy but Cool", "Ferda",
+]
+
 # ---------- DB SETUP ----------
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -209,18 +218,29 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
             if tag_list:
                 st.write(" ".join(f"`{t}`" for t in tag_list))
 
+            preset_selected = [t for t in tag_list if t in SUGGESTED_TAGS]
+            custom_existing = [t for t in tag_list if t not in SUGGESTED_TAGS]
+
+            quick_tags = st.multiselect(
+                "Quick tags",
+                SUGGESTED_TAGS,
+                default=preset_selected,
+                key=f"quicktags_{row['id']}",
+            )
             tgc1, tgc2 = st.columns([3, 1])
             with tgc1:
-                tags_val = st.text_input(
-                    "Tags (comma-separated — skiing, music, engineering...)",
-                    value=row["tags"] or "",
-                    key=f"tags_input_{row['id']}",
+                custom_tags_val = st.text_input(
+                    "Other tags (comma-separated)",
+                    value=", ".join(custom_existing),
+                    key=f"customtags_{row['id']}",
                 )
             with tgc2:
                 st.write("")
                 st.write("")
-                if st.button("Save", key=f"tags_save_{row['id']}"):
-                    if set_tags(row["id"], tags_val.strip()):
+                if st.button("Save tags", key=f"tags_save_{row['id']}"):
+                    custom_parsed = [t.strip() for t in custom_tags_val.split(",") if t.strip()]
+                    merged = quick_tags + [t for t in custom_parsed if t not in quick_tags]
+                    if set_tags(row["id"], ", ".join(merged)):
                         st.rerun()
 
             yes, maybe, no = vote_counts(row["id"])
