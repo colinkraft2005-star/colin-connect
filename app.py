@@ -140,6 +140,29 @@ def set_assigned(pnm_id, assigned_to):
         st.error("That didn't save — the app's busy, try again in a second.")
         return False
 
+def update_pnm_info(pnm_id, name, hometown, major):
+    try:
+        conn.execute(
+            "UPDATE pnms SET name=?, hometown=?, major=? WHERE id=?",
+            (name, hometown, major, pnm_id)
+        )
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
+
+def delete_pnm(pnm_id):
+    try:
+        conn.execute("DELETE FROM pnms WHERE id=?", (pnm_id,))
+        conn.execute("DELETE FROM votes WHERE pnm_id=?", (pnm_id,))
+        conn.execute("DELETE FROM comments WHERE pnm_id=?", (pnm_id,))
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
+
 def render_pnm_card(row, member_name, is_admin, show_assign=False):
     with st.container(border=True):
         c1, c2 = st.columns([1, 3])
@@ -206,6 +229,37 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
                 for cmt_member, comment, created_at in get_comments(row["id"]):
                     st.write(f"**{cmt_member}**: {comment}")
 
+            if is_admin:
+                with st.expander("✏️ Edit / delete (admin)"):
+                    e1, e2, e3 = st.columns(3)
+                    with e1:
+                        edit_name = st.text_input("Name", value=row["name"], key=f"edit_name_{row['id']}")
+                    with e2:
+                        edit_hometown = st.text_input("Hometown", value=row["hometown"] or "", key=f"edit_hometown_{row['id']}")
+                    with e3:
+                        edit_major = st.text_input("Major", value=row["major"] or "", key=f"edit_major_{row['id']}")
+                    if st.button("Save changes", key=f"edit_save_{row['id']}"):
+                        if update_pnm_info(row["id"], edit_name.strip(), edit_hometown.strip(), edit_major.strip()):
+                            st.rerun()
+
+                    confirm_key = f"confirm_delete_{row['id']}"
+                    if st.session_state.get(confirm_key):
+                        st.warning("Delete this PNM permanently — votes and comments go with it. Can't be undone.")
+                        dc1, dc2 = st.columns(2)
+                        with dc1:
+                            if st.button("Yes, delete", key=f"confirm_yes_{row['id']}"):
+                                if delete_pnm(row["id"]):
+                                    st.session_state[confirm_key] = False
+                                    st.rerun()
+                        with dc2:
+                            if st.button("Cancel", key=f"confirm_no_{row['id']}"):
+                                st.session_state[confirm_key] = False
+                                st.rerun()
+                    else:
+                        if st.button("🗑️ Delete this PNM", key=f"delete_{row['id']}"):
+                            st.session_state[confirm_key] = True
+                            st.rerun()
+
 # ---------- TOP-LEVEL NAV ----------
 if "area" not in st.session_state:
     st.session_state.area = "checkin"
@@ -261,16 +315,21 @@ else:
         pin = st.text_input("PIN", type="password")
         name = st.text_input("Your first name (used to tag your votes/comments)")
         if st.button("Enter", type="primary"):
-            if not name.strip():
+            # Normalized (trimmed + title-cased) so "colin", "Colin ", and
+            # "COLIN" all resolve to the same voter identity — otherwise the
+            # one-vote-per-name UNIQUE constraint is trivially bypassed by
+            # typing your name slightly differently.
+            normalized_name = " ".join(name.strip().split()).title()
+            if not normalized_name:
                 st.error("Enter your name so we can attribute your votes.")
             elif pin == ADMIN_PIN:
                 st.session_state.authed = True
-                st.session_state.member_name = name.strip()
+                st.session_state.member_name = normalized_name
                 st.session_state.is_admin = True
                 st.rerun()
             elif pin == HOUSE_PIN:
                 st.session_state.authed = True
-                st.session_state.member_name = name.strip()
+                st.session_state.member_name = normalized_name
                 st.session_state.is_admin = False
                 st.rerun()
             else:
