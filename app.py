@@ -86,6 +86,12 @@ conn = get_conn()
 # ---------- HELPERS ----------
 def fetch_pnms(dirty=None):
     df = pd.read_sql_query("SELECT * FROM pnms ORDER BY checked_in_at DESC", conn)
+    # pandas reads a SQL NULL in a text column back as NaN (a float), not
+    # None — and NaN is still truthy in Python, so `row["tags"] or ""`
+    # doesn't catch it and `.split(",")` crashes on a float. Fill these
+    # columns with "" right here so every caller gets a real string.
+    for col in ("hometown", "major", "phone", "tags", "assigned_to"):
+        df[col] = df[col].fillna("")
     if dirty is not None:
         df = df[df["dirty"] == (1 if dirty else 0)]
     return df
