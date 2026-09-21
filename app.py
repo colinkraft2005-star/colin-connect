@@ -342,8 +342,12 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
                             st.rerun()
 
 # ---------- TOP-LEVEL NAV ----------
+# Defaults to Member Area, not Check-In — landing straight on your own
+# camera preview every time you open the link was jarring for members just
+# trying to vote. The door station just needs one click to Check-In and
+# can stay parked there.
 if "area" not in st.session_state:
-    st.session_state.area = "checkin"
+    st.session_state.area = "member"
 
 with st.sidebar:
     st.write("### Rush Tracker")
