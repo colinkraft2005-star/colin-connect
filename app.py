@@ -1,6 +1,8 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+import re
+import zipfile
 from datetime import datetime
 from io import BytesIO
 
@@ -336,4 +338,20 @@ else:
             st.dataframe(board, use_container_width=True, hide_index=True)
 
             csv = board.to_csv(index=False).encode("utf-8")
-            st.download_button("Download CSV", csv, "rush_leaderboard.csv", "text/csv")
+            dl1, dl2 = st.columns(2)
+            with dl1:
+                st.download_button("Download CSV", csv, "rush_leaderboard.csv", "text/csv")
+            with dl2:
+                zip_buf = BytesIO()
+                with zipfile.ZipFile(zip_buf, "w") as zf:
+                    for _, row in df.iterrows():
+                        if row["photo"] is not None:
+                            safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", row["name"]) or "pnm"
+                            zf.writestr(f"{safe_name}_{row['id']}.jpg", row["photo"])
+                st.download_button(
+                    "Download all photos (ZIP)",
+                    zip_buf.getvalue(),
+                    "rush_photos.zip",
+                    "application/zip",
+                )
+                st.caption("Do this every night — SQLite storage on Streamlit Cloud isn't guaranteed to survive restarts.")
