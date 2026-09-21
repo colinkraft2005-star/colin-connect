@@ -571,10 +571,10 @@ else:
             rows = []
             for _, row in df.iterrows():
                 yes, maybe, no = vote_counts(row["id"])
-                # Ranking weight: a Yes counts full, a Maybe counts half, a
-                # No counts zero — per direct request, not a simple up/down
-                # net score anymore.
-                score = yes * 1 + maybe * 0.5 + no * 0
+                # Ranking weight: Yes=+1, No=-1, Maybe=0 — Maybe doesn't
+                # move the score but the raw count still shows for a gauge
+                # of who's on the fence.
+                score = yes * 1 + maybe * 0 + no * -1
                 # Streamlit Cloud's server clock is UTC — check-in
                 # timestamps are stored that way, so convert to Pacific
                 # (where the house actually is) for display.
