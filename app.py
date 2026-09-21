@@ -5,6 +5,7 @@ import re
 import zipfile
 from datetime import datetime
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 # ---------- CONFIG ----------
 st.set_page_config(page_title="Rush Tracker", page_icon="🏠", layout="wide")
@@ -384,6 +385,15 @@ else:
                 # No counts zero — per direct request, not a simple up/down
                 # net score anymore.
                 score = yes * 1 + maybe * 0.5 + no * 0
+                # Streamlit Cloud's server clock is UTC — check-in
+                # timestamps are stored that way, so convert to Pacific
+                # (where the house actually is) for display.
+                checked_in_pt = (
+                    pd.to_datetime(row["checked_in_at"])
+                    .tz_localize("UTC")
+                    .tz_convert(ZoneInfo("America/Los_Angeles"))
+                    .strftime("%Y-%m-%d %I:%M %p")
+                )
                 rows.append({
                     "Name": row["name"],
                     "Hometown": row["hometown"],
@@ -395,7 +405,7 @@ else:
                     "Dirty": "✓" if row["dirty"] else "",
                     "Assigned": row["assigned_to"] or "",
                     "Comments": len(get_comments(row["id"])),
-                    "Checked in": row["checked_in_at"],
+                    "Checked in": checked_in_pt,
                 })
             board = pd.DataFrame(rows).sort_values("Score", ascending=False)
             st.dataframe(board, use_container_width=True, hide_index=True)
