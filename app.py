@@ -14,6 +14,11 @@ ADMIN_PIN = st.secrets.get("ADMIN_PIN", "adminchangeme")   # the one person who 
 # ---------- DB SETUP ----------
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # WAL lets reads and writes coexist instead of blocking each other, and
+    # busy_timeout makes a write wait/retry for 5s instead of instantly
+    # erroring — both matter once dozens of people are voting at once.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pnms (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,9 +27,16 @@ def get_conn():
             major TEXT,
             photo BLOB,
             dirty INTEGER DEFAULT 0,
+            assigned_to TEXT,
             checked_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Migration for the already-deployed db, which was created before
+    # assigned_to existed — CREATE TABLE IF NOT EXISTS above is a no-op
+    # against it, so add the column by hand if it's missing.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(pnms)").fetchall()}
+    if "assigned_to" not in existing_cols:
+        conn.execute("ALTER TABLE pnms ADD COLUMN assigned_to TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS votes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,22 +87,32 @@ def my_vote(pnm_id, member_name):
 
 def cast_vote(pnm_id, member_name, value):
     existing = my_vote(pnm_id, member_name)
-    if existing == value:
-        conn.execute("DELETE FROM votes WHERE pnm_id=? AND member_name=?", (pnm_id, member_name))
-    else:
-        conn.execute(
-            "INSERT INTO votes (pnm_id, member_name, vote) VALUES (?,?,?) "
-            "ON CONFLICT(pnm_id, member_name) DO UPDATE SET vote=excluded.vote",
-            (pnm_id, member_name, value)
-        )
-    conn.commit()
+    try:
+        if existing == value:
+            conn.execute("DELETE FROM votes WHERE pnm_id=? AND member_name=?", (pnm_id, member_name))
+        else:
+            conn.execute(
+                "INSERT INTO votes (pnm_id, member_name, vote) VALUES (?,?,?) "
+                "ON CONFLICT(pnm_id, member_name) DO UPDATE SET vote=excluded.vote",
+                (pnm_id, member_name, value)
+            )
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
 
 def add_comment(pnm_id, member_name, text):
-    conn.execute(
-        "INSERT INTO comments (pnm_id, member_name, comment) VALUES (?,?,?)",
-        (pnm_id, member_name, text)
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            "INSERT INTO comments (pnm_id, member_name, comment) VALUES (?,?,?)",
+            (pnm_id, member_name, text)
+        )
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
 
 def get_comments(pnm_id):
     return conn.execute(
@@ -99,10 +121,24 @@ def get_comments(pnm_id):
     ).fetchall()
 
 def set_dirty(pnm_id, value):
-    conn.execute("UPDATE pnms SET dirty=? WHERE id=?", (1 if value else 0, pnm_id))
-    conn.commit()
+    try:
+        conn.execute("UPDATE pnms SET dirty=? WHERE id=?", (1 if value else 0, pnm_id))
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
 
-def render_pnm_card(row, member_name, is_admin):
+def set_assigned(pnm_id, assigned_to):
+    try:
+        conn.execute("UPDATE pnms SET assigned_to=? WHERE id=?", (assigned_to, pnm_id))
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
+
+def render_pnm_card(row, member_name, is_admin, show_assign=False):
     with st.container(border=True):
         c1, c2 = st.columns([1, 3])
         with c1:
@@ -121,35 +157,50 @@ def render_pnm_card(row, member_name, is_admin):
             with vc1:
                 label = f"✅ {yes}" + (" ✓" if mine == 1 else "")
                 if st.button(label, key=f"yes_{row['id']}"):
-                    cast_vote(row["id"], member_name, 1)
-                    st.rerun()
+                    if cast_vote(row["id"], member_name, 1):
+                        st.rerun()
             with vc2:
                 label = f"🤔 {maybe}" + (" ✓" if mine == 0 else "")
                 if st.button(label, key=f"maybe_{row['id']}"):
-                    cast_vote(row["id"], member_name, 0)
-                    st.rerun()
+                    if cast_vote(row["id"], member_name, 0):
+                        st.rerun()
             with vc3:
                 label = f"❌ {no}" + (" ✓" if mine == -1 else "")
                 if st.button(label, key=f"no_{row['id']}"):
-                    cast_vote(row["id"], member_name, -1)
-                    st.rerun()
+                    if cast_vote(row["id"], member_name, -1):
+                        st.rerun()
             with vc4:
                 if is_admin:
                     if row["dirty"]:
                         if st.button("↩️ Move back", key=f"undirty_{row['id']}"):
-                            set_dirty(row["id"], False)
-                            st.rerun()
+                            if set_dirty(row["id"], False):
+                                st.rerun()
                     else:
                         if st.button("🚩 Dirty", key=f"dirty_{row['id']}"):
-                            set_dirty(row["id"], True)
+                            if set_dirty(row["id"], True):
+                                st.rerun()
+
+            if show_assign:
+                ac1, ac2 = st.columns([3, 1])
+                with ac1:
+                    assign_val = st.text_input(
+                        "Assigned to (who's texting him)",
+                        value=row["assigned_to"] or "",
+                        key=f"assign_input_{row['id']}",
+                    )
+                with ac2:
+                    st.write("")
+                    st.write("")
+                    if st.button("Save", key=f"assign_save_{row['id']}"):
+                        if set_assigned(row["id"], assign_val.strip()):
                             st.rerun()
 
             with st.expander(f"Comments ({len(get_comments(row['id']))})"):
                 new_comment = st.text_input("Add a comment", key=f"comment_input_{row['id']}")
                 if st.button("Post", key=f"post_{row['id']}"):
                     if new_comment.strip():
-                        add_comment(row["id"], member_name, new_comment.strip())
-                        st.rerun()
+                        if add_comment(row["id"], member_name, new_comment.strip()):
+                            st.rerun()
                 for cmt_member, comment, created_at in get_comments(row["id"]):
                     st.write(f"**{cmt_member}**: {comment}")
 
@@ -183,12 +234,15 @@ if st.session_state.area == "checkin":
                 st.error("Name is required.")
             else:
                 photo_bytes = photo.getvalue() if photo is not None else None
-                conn.execute(
-                    "INSERT INTO pnms (name, hometown, major, photo, checked_in_at) VALUES (?,?,?,?,?)",
-                    (name.strip(), hometown.strip(), major.strip(), photo_bytes, datetime.now())
-                )
-                conn.commit()
-                st.success(f"Thanks {name}, you're checked in!")
+                try:
+                    conn.execute(
+                        "INSERT INTO pnms (name, hometown, major, photo, checked_in_at) VALUES (?,?,?,?,?)",
+                        (name.strip(), hometown.strip(), major.strip(), photo_bytes, datetime.now())
+                    )
+                    conn.commit()
+                    st.success(f"Thanks {name}, you're checked in!")
+                except sqlite3.OperationalError:
+                    st.error("That didn't save — the app's busy, hit Check In again.")
 
 # ---------- MEMBER AREA (PIN required) ----------
 else:
@@ -253,7 +307,7 @@ else:
         if df.empty:
             st.info("Nobody's been tagged yet.")
         for _, row in df.iterrows():
-            render_pnm_card(row, member_name, is_admin)
+            render_pnm_card(row, member_name, is_admin, show_assign=True)
 
     elif page == "Leaderboard / Export":
         st.title("📊 Leaderboard")
@@ -274,6 +328,7 @@ else:
                     "No": no,
                     "Net": yes - no,
                     "Dirty": "Yes" if row["dirty"] else "",
+                    "Assigned": row["assigned_to"] or "",
                     "Comments": len(get_comments(row["id"])),
                     "Checked in": row["checked_in_at"],
                 })
