@@ -78,6 +78,19 @@ def get_conn():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Replaces the old pnms.tags comma-separated column — that had no way
+    # to know who added a given tag. One row per (pnm, tag), so we can show
+    # "added by X" on hover. The old tags column is left in place, unused.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pnm_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pnm_id INTEGER,
+            tag TEXT,
+            added_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(pnm_id, tag)
+        )
+    """)
     conn.commit()
     return conn
 
@@ -179,9 +192,37 @@ def update_pnm_info(pnm_id, name, hometown, major, phone):
         st.error("That didn't save — the app's busy, try again in a second.")
         return False
 
-def set_tags(pnm_id, tags_str):
+def get_pnm_tags(pnm_id):
+    """{tag: added_by} for one PNM, in the order tags were added."""
+    rows = conn.execute(
+        "SELECT tag, added_by FROM pnm_tags WHERE pnm_id=? ORDER BY created_at", (pnm_id,)
+    ).fetchall()
+    return {tag: added_by for tag, added_by in rows}
+
+def get_all_pnm_tags():
+    """{pnm_id: {tag: added_by}} for every PNM — one query instead of N."""
+    rows = conn.execute("SELECT pnm_id, tag, added_by FROM pnm_tags").fetchall()
+    result = {}
+    for pnm_id, tag, added_by in rows:
+        result.setdefault(pnm_id, {})[tag] = added_by
+    return result
+
+def add_pnm_tag(pnm_id, tag, added_by):
     try:
-        conn.execute("UPDATE pnms SET tags=? WHERE id=?", (tags_str, pnm_id))
+        conn.execute(
+            "INSERT INTO pnm_tags (pnm_id, tag, added_by) VALUES (?,?,?) "
+            "ON CONFLICT(pnm_id, tag) DO UPDATE SET added_by=excluded.added_by",
+            (pnm_id, tag, added_by)
+        )
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        st.error("That didn't save — the app's busy, try again in a second.")
+        return False
+
+def remove_pnm_tag(pnm_id, tag):
+    try:
+        conn.execute("DELETE FROM pnm_tags WHERE pnm_id=? AND tag=?", (pnm_id, tag))
         conn.commit()
         return True
     except sqlite3.OperationalError:
@@ -222,37 +263,45 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
             if row["phone"]:
                 st.caption(f"📱 {row['phone']}")
 
-            tag_list = [t.strip() for t in (row["tags"] or "").split(",") if t.strip()]
+            pnm_tag_map = get_pnm_tags(row["id"])  # {tag: added_by}
 
-            st.caption("Tags — click to add/remove")
+            st.caption("Tags — click to add/remove, hover to see who added it")
             for i in range(0, len(SUGGESTED_TAGS), 4):
                 chunk = SUGGESTED_TAGS[i:i + 4]
                 tag_cols = st.columns(4)
                 for j, tag in enumerate(chunk):
                     with tag_cols[j]:
-                        active = tag in tag_list
+                        added_by = pnm_tag_map.get(tag)
+                        active = added_by is not None
                         label = ("✅ " if active else "") + tag
-                        if st.button(label, key=f"tagbtn_{row['id']}_{tag}"):
-                            new_tags = [t for t in tag_list if t != tag] if active else tag_list + [tag]
-                            if set_tags(row["id"], ", ".join(new_tags)):
+                        help_text = f"Added by {added_by}" if active else None
+                        if st.button(label, key=f"tagbtn_{row['id']}_{tag}", help=help_text):
+                            ok = remove_pnm_tag(row["id"], tag) if active else add_pnm_tag(row["id"], tag, member_name)
+                            if ok:
                                 st.rerun()
 
-            custom_existing = [t for t in tag_list if t not in SUGGESTED_TAGS]
+            custom_existing = {t: by for t, by in pnm_tag_map.items() if t not in SUGGESTED_TAGS}
+            if custom_existing:
+                st.write(" · ".join(f"`{t}` _(by {by})_" for t, by in custom_existing.items()))
             tgc1, tgc2 = st.columns([3, 1])
             with tgc1:
                 custom_tags_val = st.text_input(
                     "Other tags (comma-separated)",
-                    value=", ".join(custom_existing),
+                    value=", ".join(custom_existing.keys()),
                     key=f"customtags_{row['id']}",
                 )
             with tgc2:
                 st.write("")
                 st.write("")
                 if st.button("Save", key=f"tags_save_{row['id']}"):
-                    custom_parsed = [t.strip() for t in custom_tags_val.split(",") if t.strip()]
-                    preset_active = [t for t in tag_list if t in SUGGESTED_TAGS]
-                    merged = preset_active + [t for t in custom_parsed if t not in preset_active]
-                    if set_tags(row["id"], ", ".join(merged)):
+                    custom_parsed = {t.strip() for t in custom_tags_val.split(",") if t.strip()}
+                    existing_set = set(custom_existing.keys())
+                    ok = True
+                    for t in custom_parsed - existing_set:
+                        ok = add_pnm_tag(row["id"], t, member_name) and ok
+                    for t in existing_set - custom_parsed:
+                        ok = remove_pnm_tag(row["id"], t) and ok
+                    if ok:
                         st.rerun()
 
             yes, maybe, no = vote_counts(row["id"])
@@ -447,22 +496,15 @@ else:
     if page == "Vote & Comment":
         st.title("👍 Vote & Comment")
         df = fetch_pnms(dirty=False)
+        all_pnm_tags = get_all_pnm_tags()
 
-        all_tags = sorted({
-            t.strip()
-            for tags_str in df["tags"].fillna("")
-            for t in tags_str.split(",")
-            if t.strip()
-        })
+        all_tags = sorted({tag for tags in all_pnm_tags.values() for tag in tags})
         selected_tags = st.multiselect(
             "Filter by tag — find who to go talk to",
             all_tags,
         )
         if selected_tags:
-            def _has_any_selected_tag(tags_str):
-                row_tags = {t.strip() for t in (tags_str or "").split(",") if t.strip()}
-                return bool(row_tags & set(selected_tags))
-            df = df[df["tags"].apply(_has_any_selected_tag)]
+            df = df[df["id"].apply(lambda pid: bool(set(all_pnm_tags.get(pid, {})) & set(selected_tags)))]
 
         search = st.text_input("Search by name")
         if search:
@@ -487,20 +529,13 @@ else:
         st.title("🏷️ Browse by Tag")
         st.caption("Find who to go talk to — pick a tag, see everyone who has it.")
         df = fetch_pnms()
+        all_pnm_tags = get_all_pnm_tags()
 
-        browse_all_tags = sorted({
-            t.strip()
-            for tags_str in df["tags"].fillna("")
-            for t in tags_str.split(",")
-            if t.strip()
-        })
+        browse_all_tags = sorted({tag for tags in all_pnm_tags.values() for tag in tags})
         browse_selected = st.multiselect("Tags", browse_all_tags)
 
         if browse_selected:
-            def _has_any_browse_tag(tags_str):
-                row_tags = {t.strip() for t in (tags_str or "").split(",") if t.strip()}
-                return bool(row_tags & set(browse_selected))
-            df = df[df["tags"].apply(_has_any_browse_tag)]
+            df = df[df["id"].apply(lambda pid: bool(set(all_pnm_tags.get(pid, {})) & set(browse_selected)))]
         else:
             st.info("Pick one or more tags above to filter — showing everyone for now.")
 
@@ -521,13 +556,14 @@ else:
                         st.caption(f"📱 {row['phone']}")
                     if row["dirty"]:
                         st.caption("🚩 Dirty rush")
-                    tag_list = [t.strip() for t in (row["tags"] or "").split(",") if t.strip()]
-                    if tag_list:
-                        st.write(" ".join(f"`{t}`" for t in tag_list))
+                    row_tags = all_pnm_tags.get(row["id"], {})
+                    if row_tags:
+                        st.write(" · ".join(f"`{t}` _(by {by})_" for t, by in row_tags.items()))
 
     elif page == "Leaderboard / Export":
         st.title("📊 Leaderboard")
         df = fetch_pnms()
+        all_pnm_tags = get_all_pnm_tags()
 
         if df.empty:
             st.info("No PNMs checked in yet.")
@@ -553,7 +589,7 @@ else:
                     "Hometown": row["hometown"],
                     "Major": row["major"],
                     "Phone": row["phone"] or "",
-                    "Tags": row["tags"] or "",
+                    "Tags": ", ".join(all_pnm_tags.get(row["id"], {}).keys()),
                     "Yes": yes,
                     "Maybe": maybe,
                     "No": no,
