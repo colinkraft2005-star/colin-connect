@@ -19,8 +19,8 @@ ADMIN_PIN = st.secrets.get("ADMIN_PIN", "adminchangeme")   # the one person who 
 # house). Anyone can still type a custom tag in the box below these.
 SUGGESTED_TAGS = [
     "Sports", "Athlete", "Gym Rat", "Skiing/Snow", "Outdoors", "Hiking", "Hunting/Fishing",
-    "Golf", "Gaming", "Cars", "Film/Art", "Music", "Foodie", "Funny", "Chill", "Talkative",
-    "Artsy", "Laid Back", "Shy but Cool", "Ferda",
+    "Golf", "Gaming", "Cars", "Film/Art", "Music", "Foodie",
+    "Shy but Cool", "Ferda",
     "Out of State", "Junior Transfer",
 ]
 
