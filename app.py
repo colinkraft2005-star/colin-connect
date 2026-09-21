@@ -425,7 +425,7 @@ else:
         st.session_state.is_admin = False
         st.rerun()
 
-    page = st.sidebar.radio("Go to", ["Vote & Comment", "Dirty Tab", "Leaderboard / Export"])
+    page = st.sidebar.radio("Go to", ["Vote & Comment", "Dirty Tab", "Browse by Tag", "Leaderboard / Export"])
     member_name = st.session_state.member_name
     is_admin = st.session_state.is_admin
 
@@ -467,6 +467,48 @@ else:
             st.info("Nobody's been tagged yet.")
         for _, row in df.iterrows():
             render_pnm_card(row, member_name, is_admin, show_assign=True)
+
+    elif page == "Browse by Tag":
+        st.title("🏷️ Browse by Tag")
+        st.caption("Find who to go talk to — pick a tag, see everyone who has it.")
+        df = fetch_pnms()
+
+        browse_all_tags = sorted({
+            t.strip()
+            for tags_str in df["tags"].fillna("")
+            for t in tags_str.split(",")
+            if t.strip()
+        })
+        browse_selected = st.multiselect("Tags", browse_all_tags)
+
+        if browse_selected:
+            def _has_any_browse_tag(tags_str):
+                row_tags = {t.strip() for t in (tags_str or "").split(",") if t.strip()}
+                return bool(row_tags & set(browse_selected))
+            df = df[df["tags"].apply(_has_any_browse_tag)]
+        else:
+            st.info("Pick one or more tags above to filter — showing everyone for now.")
+
+        if df.empty:
+            st.info("No one matches those tags.")
+        for _, row in df.iterrows():
+            with st.container(border=True):
+                c1, c2 = st.columns([1, 4])
+                with c1:
+                    if row["photo"] is not None:
+                        st.image(BytesIO(row["photo"]), width=100)
+                    else:
+                        st.write("No photo")
+                with c2:
+                    st.subheader(row["name"])
+                    st.write(f"{row['hometown']} · {row['major']}")
+                    if row["phone"]:
+                        st.caption(f"📱 {row['phone']}")
+                    if row["dirty"]:
+                        st.caption("🚩 Dirty rush")
+                    tag_list = [t.strip() for t in (row["tags"] or "").split(",") if t.strip()]
+                    if tag_list:
+                        st.write(" ".join(f"`{t}`" for t in tag_list))
 
     elif page == "Leaderboard / Export":
         st.title("📊 Leaderboard")
