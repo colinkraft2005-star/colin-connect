@@ -380,6 +380,10 @@ else:
             rows = []
             for _, row in df.iterrows():
                 yes, maybe, no = vote_counts(row["id"])
+                # Ranking weight: a Yes counts full, a Maybe counts half, a
+                # No counts zero — per direct request, not a simple up/down
+                # net score anymore.
+                score = yes * 1 + maybe * 0.5 + no * 0
                 rows.append({
                     "Name": row["name"],
                     "Hometown": row["hometown"],
@@ -387,13 +391,13 @@ else:
                     "Yes": yes,
                     "Maybe": maybe,
                     "No": no,
-                    "Net": yes - no,
-                    "Dirty": "Yes" if row["dirty"] else "",
+                    "Score": score,
+                    "Dirty": "✓" if row["dirty"] else "",
                     "Assigned": row["assigned_to"] or "",
                     "Comments": len(get_comments(row["id"])),
                     "Checked in": row["checked_in_at"],
                 })
-            board = pd.DataFrame(rows).sort_values("Net", ascending=False)
+            board = pd.DataFrame(rows).sort_values("Score", ascending=False)
             st.dataframe(board, use_container_width=True, hide_index=True)
 
             csv = board.to_csv(index=False).encode("utf-8")
