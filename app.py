@@ -22,6 +22,7 @@ SUGGESTED_TAGS = [
     "Golf", "Gaming", "Cars", "Film/Art", "Music", "Foodie",
     "Shy but Cool", "Ferda",
     "Out of State", "Junior Transfer",
+    "Pre-Med", "Business", "STEM",
 ]
 
 # ---------- DB SETUP ----------
