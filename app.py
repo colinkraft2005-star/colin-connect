@@ -18,9 +18,10 @@ ADMIN_PIN = st.secrets.get("ADMIN_PIN", "adminchangeme")   # the one person who 
 # references, nothing that could read badly if a CSV export ever left the
 # house). Anyone can still type a custom tag in the box below these.
 SUGGESTED_TAGS = [
-    "Sports", "Music", "Skiing/Snow", "Outdoors", "Gaming", "Fitness/Gym", "Cars", "Film/Art",
-    "East Coast", "West Coast", "Legacy",
-    "Shy but Cool", "Ferda",
+    "Sports", "Athlete", "Gym Rat", "Skiing/Snow", "Outdoors", "Hiking", "Hunting/Fishing",
+    "Golf", "Gaming", "Cars", "Film/Art", "Music", "Foodie", "Funny", "Chill", "Talkative",
+    "Artsy", "Laid Back", "Shy but Cool", "Ferda",
+    "Out of State", "Junior Transfer",
 ]
 
 # ---------- DB SETUP ----------
