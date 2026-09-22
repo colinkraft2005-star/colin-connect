@@ -23,6 +23,7 @@ SUGGESTED_TAGS = [
     "Shy but Cool", "Ferda",
     "Out of State", "Junior Transfer",
     "Pre-Med", "Business", "STEM",
+    "Herb",
 ]
 
 # ---------- DB SETUP ----------
