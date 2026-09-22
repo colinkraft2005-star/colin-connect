@@ -109,6 +109,30 @@ def fetch_pnms(dirty=None):
         df = df[df["dirty"] == (1 if dirty else 0)]
     return df
 
+PAGE_SIZE = 20
+
+def paginate(df, state_key):
+    """Slices df to one page and renders Previous/Next controls. Keeps
+    pages small on purpose — rendering hundreds of photos on one page at
+    once is what actually gets slow, not the vote/tag logic itself."""
+    total = len(df)
+    if total == 0:
+        return df
+    max_page = (total - 1) // PAGE_SIZE
+    current = min(st.session_state.get(state_key, 0), max_page)
+    pc1, pc2, pc3 = st.columns([1, 2, 1])
+    with pc1:
+        if st.button("← Previous", disabled=current <= 0, key=f"{state_key}_prev"):
+            st.session_state[state_key] = current - 1
+            st.rerun()
+    with pc2:
+        st.write(f"Showing {current * PAGE_SIZE + 1}-{min((current + 1) * PAGE_SIZE, total)} of {total}")
+    with pc3:
+        if st.button("Next →", disabled=current >= max_page, key=f"{state_key}_next"):
+            st.session_state[state_key] = current + 1
+            st.rerun()
+    return df.iloc[current * PAGE_SIZE : (current + 1) * PAGE_SIZE]
+
 def vote_counts(pnm_id):
     row = conn.execute(
         "SELECT "
@@ -512,8 +536,10 @@ else:
 
         if df.empty:
             st.info("No PNMs checked in yet.")
-        for _, row in df.iterrows():
-            render_pnm_card(row, member_name, is_admin)
+        else:
+            page_df = paginate(df, "vc_page")
+            for _, row in page_df.iterrows():
+                render_pnm_card(row, member_name, is_admin)
 
     elif page == "Dirty Tab":
         st.title("🚩 Dirty Rush List")
@@ -541,6 +567,8 @@ else:
 
         if df.empty:
             st.info("No one matches those tags.")
+        else:
+            df = paginate(df, "browse_page")
         for _, row in df.iterrows():
             with st.container(border=True):
                 c1, c2 = st.columns([1, 4])
