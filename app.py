@@ -279,7 +279,7 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
         c1, c2 = st.columns([1, 3])
         with c1:
             if row["photo"] is not None:
-                st.image(BytesIO(row["photo"]), width=150)
+                st.image(BytesIO(row["photo"]), width=220)
             else:
                 st.write("No photo")
         with c2:
@@ -287,47 +287,6 @@ def render_pnm_card(row, member_name, is_admin, show_assign=False):
             st.write(f"{row['hometown']} · {row['major']}")
             if row["phone"]:
                 st.caption(f"📱 {row['phone']}")
-
-            pnm_tag_map = get_pnm_tags(row["id"])  # {tag: added_by}
-
-            st.caption("Tags — click to add/remove, hover to see who added it")
-            for i in range(0, len(SUGGESTED_TAGS), 4):
-                chunk = SUGGESTED_TAGS[i:i + 4]
-                tag_cols = st.columns(4)
-                for j, tag in enumerate(chunk):
-                    with tag_cols[j]:
-                        added_by = pnm_tag_map.get(tag)
-                        active = added_by is not None
-                        label = ("✅ " if active else "") + tag
-                        help_text = f"Added by {added_by}" if active else None
-                        if st.button(label, key=f"tagbtn_{row['id']}_{tag}", help=help_text):
-                            ok = remove_pnm_tag(row["id"], tag) if active else add_pnm_tag(row["id"], tag, member_name)
-                            if ok:
-                                st.rerun()
-
-            custom_existing = {t: by for t, by in pnm_tag_map.items() if t not in SUGGESTED_TAGS}
-            if custom_existing:
-                st.write(" · ".join(f"`{t}` _(by {by})_" for t, by in custom_existing.items()))
-            tgc1, tgc2 = st.columns([3, 1])
-            with tgc1:
-                custom_tags_val = st.text_input(
-                    "Other tags (comma-separated)",
-                    value=", ".join(custom_existing.keys()),
-                    key=f"customtags_{row['id']}",
-                )
-            with tgc2:
-                st.write("")
-                st.write("")
-                if st.button("Save", key=f"tags_save_{row['id']}"):
-                    custom_parsed = {t.strip() for t in custom_tags_val.split(",") if t.strip()}
-                    existing_set = set(custom_existing.keys())
-                    ok = True
-                    for t in custom_parsed - existing_set:
-                        ok = add_pnm_tag(row["id"], t, member_name) and ok
-                    for t in existing_set - custom_parsed:
-                        ok = remove_pnm_tag(row["id"], t) and ok
-                    if ok:
-                        st.rerun()
 
             yes, maybe, no = vote_counts(row["id"])
             mine = my_vote(row["id"], member_name)
@@ -575,7 +534,7 @@ else:
                 c1, c2 = st.columns([1, 4])
                 with c1:
                     if row["photo"] is not None:
-                        st.image(BytesIO(row["photo"]), width=100)
+                        st.image(BytesIO(row["photo"]), width=160)
                     else:
                         st.write("No photo")
                 with c2:
