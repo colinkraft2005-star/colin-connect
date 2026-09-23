@@ -506,6 +506,10 @@ else:
         st.caption("Guys tagged for dirty rush.")
         df = fetch_pnms(dirty=True)
 
+        dirty_search = st.text_input("Search by name", key="dirty_search")
+        if dirty_search:
+            df = df[df["name"].str.contains(dirty_search, case=False, na=False)]
+
         if df.empty:
             st.info("Nobody's been tagged yet.")
         for _, row in df.iterrows():
@@ -524,6 +528,10 @@ else:
             df = df[df["id"].apply(lambda pid: bool(set(all_pnm_tags.get(pid, {})) & set(browse_selected)))]
         else:
             st.info("Pick one or more tags above to filter — showing everyone for now.")
+
+        browse_search = st.text_input("Search by name", key="browse_search")
+        if browse_search:
+            df = df[df["name"].str.contains(browse_search, case=False, na=False)]
 
         if df.empty:
             st.info("No one matches those tags.")
@@ -552,6 +560,10 @@ else:
         st.title("📊 Leaderboard")
         df = fetch_pnms()
         all_pnm_tags = get_all_pnm_tags()
+
+        leaderboard_search = st.text_input("Search by name", key="leaderboard_search")
+        if leaderboard_search:
+            df = df[df["name"].str.contains(leaderboard_search, case=False, na=False)]
 
         if df.empty:
             st.info("No PNMs checked in yet.")
